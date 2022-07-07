@@ -4,9 +4,11 @@ import torch
 import numpy as np
 import torch_geometric.transforms as T
 import torch.nn.functional as F
+import torch_geometric.utils as utils
 
 sys.path.append(os.path.join(os.path.dirname("__file__"), '..'))
-from utils import XYGraphP1
+from our_model.modified_xygraph import XYGraphP1
+from our_model.load_data import fold_timestamp
 
 # cuda_device = 7
 # device = torch.device('cuda:{}'.format(cuda_device) if torch.cuda.is_available() else 'cpu')
@@ -14,8 +16,8 @@ from utils import XYGraphP1
 # dataset = XYGraphP1(root='/home/luckytiger/xinye_data_1', name='xydata', transform=T.ToSparseTensor())
 # data = dataset[0].to(device)
 
-file_path = '/home/luckytiger/xinye_data_1/phase1_gdata.npz'
-dataset = np.load(file_path)
+# file_path = '/home/luckytiger/xinye_data_1/phase1_gdata.npz'
+# dataset = np.load(file_path)
 
 # dd_path = '/home/luckytiger/xinye_data_1/origin_dd.npy'
 # dd = torch.from_numpy(np.load(dd_path))
@@ -27,10 +29,15 @@ dataset = np.load(file_path)
 # print(y.size())
 # print(y_one_hot[:, :-1].size())
 
-edge_type = torch.from_numpy(dataset['edge_type'])
-edge_timestamp = torch.from_numpy(dataset['edge_timestamp'])
-print(edge_type.size())
-print(edge_timestamp.size())
+# edge_type = torch.from_numpy(dataset['edge_type'])
+# edge_timestamp = torch.from_numpy(dataset['edge_timestamp'])
+# print(edge_type.size())
+# print(edge_timestamp.size())
+#
+# edge_feature = torch.cat((edge_type.unsqueeze(1), edge_timestamp.unsqueeze(1)), dim=-1)
+# print(edge_feature.size())
 
-edge_feature = torch.cat((edge_type.unsqueeze(1), edge_timestamp.unsqueeze(1)), dim=-1)
-print(edge_feature.size())
+dataset = XYGraphP1(root='/home/luckytiger/xinye_data_1', name='xydata')
+data = dataset[0]
+
+print((data.x == -1).sum())

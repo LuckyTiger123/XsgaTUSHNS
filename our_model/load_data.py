@@ -12,6 +12,7 @@ import torch_geometric.utils as utils
 def add_feature_flag(x: Tensor):
     feature_flag = torch.zeros_like(x)
     feature_flag[x == -1] = 1
+    x[x == -1] = 0
     return torch.cat((x, feature_flag), dim=1)
 
 
@@ -28,7 +29,7 @@ def add_id_feature(x: Tensor):
     return torch.cat((x.T, id_feature)).T
 
 
-def add_dynamic_degree(x: Tensor, fold_num: int = 50):
+def add_dynamic_degree(x: Tensor):
     dd_path = '/home/luckytiger/xinye_data_1/origin_dd.npy'
     dd = torch.from_numpy(np.load(dd_path)).to(dtype=x.dtype)
     return torch.cat((x, dd), dim=1)
@@ -58,3 +59,7 @@ def fold_timestamp(x: Tensor, fold_num: int = 50):
         return result
     else:
         return x
+
+
+def to_undirected(edge_index: Tensor, edge_attr: Tensor):
+    return utils.to_undirected(edge_index, edge_attr=edge_attr)

@@ -1,16 +1,18 @@
 import os
 import sys
 import torch
-import torch_geometric.transforms as T
 import torch.nn.functional as F
 from sklearn.metrics import roc_auc_score
 
 sys.path.append(os.path.join(os.path.dirname("__file__"), '..'))
 from our_model.modified_xygraph import XYGraphP1
-from our_model.load_data import fold_timestamp
+from our_model.load_data import fold_timestamp, to_undirected
+from our_model.faeture_propagation import feature_propagation
 
 cuda_device = 7
-epoch_number = 1000
+epoch_number = 500
+k = 1
+eps = 1
 
 # device
 device = torch.device('cuda:{}'.format(cuda_device) if torch.cuda.is_available() else 'cpu')
@@ -25,11 +27,29 @@ torch.backends.cudnn.deterministic = True
 dataset = XYGraphP1(root='/home/luckytiger/xinye_data_1', name='xydata')
 data = dataset[0]
 
-x = data.x[:, :37]
+fp = feature_propagation(k=k, eps=eps).to(device)
+
+x_raw_feature = data.x[:, :17].to(device)
+x_raw_mask = data.x[:, 17:34].to(device)
+
+edge_index, edge_attr = to_undirected(data.edge_index, data.edge_attr)
+# edge_index, edge_attr = data.edge_index, data.edge_attr
+edge_index = edge_index.to(device)
+edge_attr = edge_attr.to(device)
+
+# fix feature
+x_fix = fp(x_raw_feature, x_raw_mask, edge_index)
+
+# remain feature
+x = data.x[:, 17:37]
 
 x_dtf = fold_timestamp(data.x[:, 41:], fold_num=30)
 
-x = torch.cat((x, x_dtf), dim=1)
+x = torch.cat((x, x_dtf), dim=1).to(device)
+
+# combine x
+x = torch.cat((x_fix, x), dim=1)
+
 data.x = x
 
 data = data.to(device)
@@ -50,11 +70,11 @@ class Net(torch.nn.Module):
 
     def forward(self, x):
         x = self.bn1(x)
-        x = self.lin1(x)
+        x = F.relu(self.lin1(x))
         x = self.bn2(x)
-        x = self.lin2(x)
+        x = F.relu(self.lin2(x))
         x = self.bn3(x)
-        x = self.lin3(x)
+        x = F.relu(self.lin3(x))
         return x
 
     def reset_parameters(self):
@@ -64,7 +84,7 @@ class Net(torch.nn.Module):
 
 
 model = Net().to(device)
-optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-7)
+optimizer = torch.optim.Adam(model.parameters(), lr=0.007, weight_decay=5e-7)
 
 
 def train():

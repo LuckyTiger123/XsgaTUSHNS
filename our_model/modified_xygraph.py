@@ -11,7 +11,7 @@ sys.path.append(os.path.join(os.path.dirname("__file__"), '..'))
 from our_model import load_data as ld
 
 
-def read_xygraphp1(folder, dmf=50):
+def read_xygraphp1(folder):
     print('read_xygraphp1')
     names = ['phase1_gdata.npz']
     items = [np.load(folder + '/' + name) for name in names]
@@ -34,7 +34,7 @@ def read_xygraphp1(folder, dmf=50):
     x = ld.add_label_feature(x, y)
 
     # add dynamic degree feature
-    x = ld.add_dynamic_degree(x, fold_num=dmf)
+    x = ld.add_dynamic_degree(x)
 
     # edge timestamp
     edge_timestamp = torch.from_numpy(items[0]['edge_timestamp'])
