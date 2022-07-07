@@ -27,7 +27,7 @@ data = dataset[0]
 
 x = data.x[:, :37]
 
-x_dtf = fold_timestamp(data.x[:, 41:], fold_num=40)
+x_dtf = fold_timestamp(data.x[:, 41:], fold_num=30)
 
 x = torch.cat((x, x_dtf), dim=1)
 data.x = x
