@@ -13,11 +13,11 @@ from our_model.faeture_propagation import feature_propagation
 from our_model.modified_GAT import modified_GAT
 
 cuda_device = 7
-epoch_number = 300
-heads = 2
+epoch_number = 100
+heads = 4
 att_norm = True
 key_type = 0
-hidden_size = 64
+hidden_size = 256
 
 # device
 device = torch.device('cuda:{}'.format(cuda_device) if torch.cuda.is_available() else 'cpu')
@@ -39,12 +39,10 @@ x_dtf = fold_timestamp(data.x[:, 41:], fold_num=30)
 x = torch.cat((x, x_dtf), dim=1)
 data.x = x
 
-edge_index, edge_attr = to_undirected(data.edge_index, data.edge_attr)
-# edge_index, edge_attr = data.edge_index, data.edge_attr
-data.edge_index = edge_index.to(device)
-data.edge_attr = edge_attr.to(device)
-
-data = data.to(device)
+# edge_index, edge_attr = to_undirected(data.edge_index, data.edge_attr)
+edge_index, edge_attr = data.edge_index, data.edge_attr
+data.edge_index = edge_index
+data.edge_attr = edge_attr
 
 
 class Net(torch.nn.Module):
@@ -84,7 +82,7 @@ class Net(torch.nn.Module):
 
 
 model = Net().to(device)
-optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=5e-7)
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=5e-4)
 
 
 def train():
@@ -94,27 +92,33 @@ def train():
     total_examples = total_loss = 0
     for batch in tqdm(train_loader):
         optimizer.zero_grad()
-        
+        batch = batch.to(device)
+        batch_size = batch.batch_size
+        out = model(batch.x, batch.edge_index)
+        loss = F.cross_entropy(out[:batch_size], batch.y[:batch_size])
+        loss.backward()
+        optimizer.step()
 
+        total_examples += batch_size
+        total_loss += float(loss) * batch_size
 
-    optimizer.zero_grad()
-
-    out = model(data.x, data.edge_index)
-    loss = F.cross_entropy(out[data.train_mask], data.y[data.train_mask])
-    loss.backward()
-    optimizer.step()
-    print('The train loss is {}.'.format(loss))
-
-    return
+    return total_loss / total_examples
 
 
 @torch.no_grad()
 def valid():
     # data.y is labels of shape (N, )
     model.eval()
-    out = model(data.x, data.edge_index)
+    ys, preds = [], []
+    for batch in tqdm(valid_loader):
+        batch_size = batch.batch_size
+        ys.append(batch.y[:batch_size])
+        out = model(batch.x.to(device), batch.edge_index.to(device))[:batch_size]
+        preds.append(F.softmax(out, dim=1)[:, 1].cpu())
 
-    return roc_auc_score(data.y[data.valid_mask].cpu(), F.softmax(out[data.valid_mask], dim=1)[:, 1].cpu())
+    y, pred = torch.cat(ys, dim=0).numpy(), torch.cat(preds, dim=0).numpy()
+
+    return roc_auc_score(y, pred)
 
 
 train_loader = NeighborLoader(data, num_neighbors=[-1], input_nodes=data.train_mask, batch_size=1024, shuffle=True,
@@ -131,7 +135,8 @@ best_valid_auc = 0
 for epoch in range(epoch_number):
     print('-----------------------------------------------------')
     print('For the {} epoch:'.format(epoch))
-    train()
+    train_loss = train()
+    print('The train loss is {}.'.format(train_loss))
     c_valid_auc = valid()
     print('The valid auc is {}.'.format(c_valid_auc))
 
