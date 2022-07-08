@@ -1,24 +1,39 @@
+import gc
 import os
 import sys
 import torch
+import argparse
 from tqdm import tqdm
+import pandas as pd
 import torch.nn.functional as F
 from sklearn.metrics import roc_auc_score
 from torch_geometric.loader import NeighborLoader
 
 sys.path.append(os.path.join(os.path.dirname("__file__"), '..'))
 from our_model.modified_xygraph import XYGraphP1
-from our_model.load_data import fold_timestamp, to_undirected, degree_frequency
+from our_model.load_data import fold_timestamp, to_undirected
 from our_model.faeture_propagation import feature_propagation
 from our_model.modified_GAT import modified_GAT
 
-cuda_device = 3
+parser = argparse.ArgumentParser()
+parser.add_argument('-c', '--cuda', type=int, default=0)
+parser.add_argument('-t', '--train_round', type=int, default=3)
+parser.add_argument('-f', '--file_id', type=int, default=0)
+parser.add_argument('-e', '--epoch', type=int, default=30)
+parser.add_argument('-hd', '--hidden_size', type=int, default=256)
+parser.add_argument('-r', '--rand_seed', type=int, default=0)
+args = parser.parse_args()
+
+cuda_device = 6
 epoch_number = 30
 heads = 4
 att_norm = True
 key_type = 0
 hidden_size = 256
-layer_num = 3
+change_to_directed = True
+layer_num = 2
+train_sampler = -1
+dropout = 0
 
 # device
 device = torch.device('cuda:{}'.format(cuda_device) if torch.cuda.is_available() else 'cpu')
@@ -36,15 +51,19 @@ data = dataset[0]
 
 # deal with the node feature
 x = data.x[:, :37]
+# x = data.x[:, :41]
 x_back_label = data.x[:, 39:41]
+# x_back_label = data.x[:, 37:41]
+# x_back_label[data.valid_mask] = 0
+# x_back_label[data.train_mask] = 0
+x = torch.cat((x, x_back_label), dim=1)
 x_dtf = fold_timestamp(data.x[:, 41:], fold_num=30)
-x_tg = degree_frequency(data.x[:, 41:])
-
-x = torch.cat((x, x_back_label, x_dtf, x_tg), dim=1)
+x = torch.cat((x, x_dtf), dim=1)
 data.x = x
-
-edge_index, edge_attr = to_undirected(data.edge_index, data.edge_attr)
-# edge_index, edge_attr = data.edge_index, data.edge_attr
+if change_to_directed:
+    edge_index, edge_attr = to_undirected(data.edge_index, data.edge_attr)
+else:
+    edge_index, edge_attr = data.edge_index, data.edge_attr
 data.edge_index = edge_index
 data.edge_attr = edge_attr
 
@@ -52,37 +71,45 @@ data.edge_attr = edge_attr
 class Net(torch.nn.Module):
     def __init__(self):
         super(Net, self).__init__()
-        self.con1 = modified_GAT(data.x.size(1), hidden_size, heads=heads, att_norm=att_norm, key_type=key_type)
-        self.con2 = modified_GAT(hidden_size * heads, hidden_size, heads=heads, att_norm=att_norm, key_type=key_type)
-        self.con3 = modified_GAT(hidden_size * heads, 2, heads=1, att_norm=att_norm, key_type=key_type)
+        self.layer_num = layer_num
 
-        self.lin1 = torch.nn.Linear(data.x.size(1), hidden_size * heads)
-        self.lin2 = torch.nn.Linear(hidden_size * heads, hidden_size * heads)
-        self.lin3 = torch.nn.Linear(hidden_size * heads, 2)
+        self.convs = torch.nn.ModuleList()
+        self.skips = torch.nn.ModuleList()
+        self.bns = torch.nn.ModuleList()
 
-        self.bn1 = torch.nn.BatchNorm1d(data.x.size(1))
-        self.bn2 = torch.nn.BatchNorm1d(hidden_size * heads)
-        self.bn3 = torch.nn.BatchNorm1d(hidden_size * heads)
+        self.convs.append(
+            modified_GAT(data.x.size(1), hidden_size, heads=heads, att_norm=att_norm, key_type=key_type,
+                         dropout=dropout))
+        self.skips.append(torch.nn.Linear(data.x.size(1), hidden_size * heads))
+        self.bns.append(torch.nn.BatchNorm1d(data.x.size(1)))
+
+        for i in range(layer_num - 2):
+            self.convs.append(
+                modified_GAT(hidden_size * heads, hidden_size, heads=heads, att_norm=att_norm, key_type=key_type,
+                             dropout=dropout))
+            self.skips.append(torch.nn.Linear(hidden_size * heads, hidden_size * heads))
+            self.bns.append(torch.nn.BatchNorm1d(hidden_size * heads))
+
+        self.convs.append(
+            modified_GAT(hidden_size * heads, 2, heads=1, att_norm=att_norm, key_type=key_type, dropout=dropout))
+        self.skips.append(torch.nn.Linear(hidden_size * heads, 2))
+        self.bns.append(torch.nn.BatchNorm1d(hidden_size * heads))
 
         self.reset_parameters()
 
     def forward(self, x, edge_index):
-        x = self.bn1(x)
-        x = F.relu(self.lin1(x) + self.con1(x, edge_index))
-        x = self.bn2(x)
-        x = F.relu(self.lin2(x) + self.con2(x, edge_index))
-        x = self.bn3(x)
-        x = F.relu(self.lin3(x) + self.con3(x, edge_index))
+        for i in range(self.layer_num):
+            x = self.bns[i](x)
+            x = F.relu(self.skips[i](x) + self.convs[i](x, edge_index))
+
         return x
 
     def reset_parameters(self):
-        self.con1.reset_parameters()
-        self.con2.reset_parameters()
-        self.con3.reset_parameters()
+        for conv in self.convs:
+            conv.reset_parameters()
 
-        self.lin1.reset_parameters()
-        self.lin2.reset_parameters()
-        self.lin3.reset_parameters()
+        for lin in self.skips:
+            lin.reset_parameters()
 
 
 model = Net().to(device)
@@ -125,10 +152,10 @@ def valid():
     return roc_auc_score(y, pred)
 
 
-train_loader = NeighborLoader(data, num_neighbors=[-1] * layer_num, input_nodes=data.train_mask, batch_size=1024,
-                              shuffle=True, num_workers=12)
-valid_loader = NeighborLoader(data, num_neighbors=[-1] * layer_num, input_nodes=data.valid_mask, batch_size=4096,
-                              shuffle=False, num_workers=12)
+train_loader = NeighborLoader(data, num_neighbors=[-1], input_nodes=data.train_mask,
+                              batch_size=1024, shuffle=True, num_workers=12)
+valid_loader = NeighborLoader(data, num_neighbors=[-1], input_nodes=data.valid_mask, batch_size=4096, shuffle=False,
+                              num_workers=12)
 
 # train_loader = NeighborSampler(data.adj_t, node_idx=train_idx, sizes=[10, 5], batch_size=1024, shuffle=True,
 #                                num_workers=12)

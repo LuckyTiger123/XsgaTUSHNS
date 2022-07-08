@@ -8,7 +8,7 @@ import torch_geometric.utils as utils
 
 sys.path.append(os.path.join(os.path.dirname("__file__"), '..'))
 from our_model.modified_xygraph import XYGraphP1
-from our_model.load_data import fold_timestamp
+from our_model.load_data import fold_timestamp, degree_frequency
 
 # cuda_device = 7
 # device = torch.device('cuda:{}'.format(cuda_device) if torch.cuda.is_available() else 'cpu')
@@ -40,4 +40,6 @@ from our_model.load_data import fold_timestamp
 dataset = XYGraphP1(root='/home/luckytiger/xinye_data_1', name='xydata')
 data = dataset[0]
 
-print((data.x == -1).sum())
+x_back_label = data.x[:, 41:]
+
+x = degree_frequency(x_back_label)
