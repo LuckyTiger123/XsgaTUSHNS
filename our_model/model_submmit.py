@@ -4,6 +4,7 @@ import sys
 import torch
 import argparse
 from tqdm import tqdm
+import numpy as np
 import pandas as pd
 import torch.nn.functional as F
 from sklearn.metrics import roc_auc_score
@@ -15,16 +16,7 @@ from our_model.load_data import fold_timestamp, to_undirected, degree_frequency
 from our_model.faeture_propagation import feature_propagation
 from our_model.modified_GAT import modified_GAT
 
-parser = argparse.ArgumentParser()
-parser.add_argument('-c', '--cuda', type=int, default=0)
-parser.add_argument('-t', '--train_round', type=int, default=3)
-parser.add_argument('-f', '--file_id', type=int, default=0)
-parser.add_argument('-e', '--epoch', type=int, default=30)
-parser.add_argument('-hd', '--hidden_size', type=int, default=256)
-parser.add_argument('-r', '--rand_seed', type=int, default=0)
-args = parser.parse_args()
-
-cuda_device = 7
+cuda_device = 6
 epoch_number = 30
 heads = 4
 att_norm = True
@@ -33,16 +25,17 @@ hidden_size = 256
 change_to_directed = True
 layer_num = 3
 train_sampler = -1
-dropout = 0.5
+dropout = 0
 class_weight = 1
-learning_rate = 0.0005
-weight_decay = 1e-4
+learning_rate = 0.001
+weight_decay = 5e-4
+file_id = 3
 
 # device
 device = torch.device('cuda:{}'.format(cuda_device) if torch.cuda.is_available() else 'cpu')
 
 # random seed
-random_seed = 0
+random_seed = 1
 torch.manual_seed(random_seed)
 torch.cuda.manual_seed(random_seed)
 torch.backends.cudnn.benchmark = False
@@ -56,7 +49,7 @@ data = dataset[0]
 x = data.x[:, :37]
 x_back_label = data.x[:, 39:41]
 x = torch.cat((x, x_back_label), dim=1)
-x_dtf = fold_timestamp(data.x[:, 41:], fold_num=30)
+x_dtf = fold_timestamp(data.x[:, 41:], fold_num=40)
 x_tg = degree_frequency(data.x[:, 41:])
 
 x = torch.cat((x, x_dtf, x_tg), dim=1)
@@ -154,10 +147,26 @@ def valid():
     return roc_auc_score(y, pred)
 
 
+@torch.no_grad()
+def test():
+    # data.y is labels of shape (N, )
+    model.eval()
+    preds = []
+    for batch in tqdm(test_loader):
+        batch_size = batch.batch_size
+        out = model(batch.x.to(device), batch.edge_index.to(device))[:batch_size]
+        preds.append(F.softmax(out, dim=1).cpu())
+
+    pred = torch.cat(preds, dim=0).numpy()
+    return pred
+
+
 train_loader = NeighborLoader(data, num_neighbors=[train_sampler] * layer_num, input_nodes=data.train_mask,
                               batch_size=1024, shuffle=True, num_workers=12)
-valid_loader = NeighborLoader(data, num_neighbors=[train_sampler] * layer_num, input_nodes=data.valid_mask,
-                              batch_size=4096, shuffle=False, num_workers=12)
+valid_loader = NeighborLoader(data, num_neighbors=[-1] * layer_num, input_nodes=data.valid_mask, batch_size=4096,
+                              shuffle=False, num_workers=12)
+test_loader = NeighborLoader(data, num_neighbors=[-1] * layer_num, input_nodes=data.test_mask, batch_size=4096,
+                             shuffle=False, num_workers=12)
 
 # train_loader = NeighborSampler(data.adj_t, node_idx=train_idx, sizes=[10, 5], batch_size=1024, shuffle=True,
 #                                num_workers=12)
@@ -165,6 +174,7 @@ valid_loader = NeighborLoader(data, num_neighbors=[train_sampler] * layer_num, i
 #                                num_workers=12)
 
 best_valid_auc = 0
+test_result = None
 for epoch in range(epoch_number):
     print('-----------------------------------------------------')
     print('For the {} epoch:'.format(epoch))
@@ -175,8 +185,10 @@ for epoch in range(epoch_number):
 
     if c_valid_auc > best_valid_auc:
         best_valid_auc = c_valid_auc
+        test_result = test()
     print('-----------------------------------------------------')
 
 print('-----------------------------------------------------')
 print('The best valid auc is {}.'.format(best_valid_auc))
 print('-----------------------------------------------------')
+np.save('../submit/model_submit_{}.npy'.format(file_id), test_result)

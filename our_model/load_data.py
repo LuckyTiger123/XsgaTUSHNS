@@ -104,8 +104,10 @@ def binned_feature(x: np.ndarray, bin_num: int = 10, binned_method: str = 'kmean
     return x_binned
 
 
-def sharpen_value(x: Tensor, left_th: float = 0, right_th: float = 0, left_m: float = 0, right_a: float = 0):
-    return
+def sharpen_value(pred: Tensor, left_th: float = 0, right_th: float = 1, left_m: float = 0, right_a: float = 0):
+    pred[pred < left_th] = 0
+    pred[pred > right_th] = 1
+    return pred
 
 
 def cal_current_state(y: np.ndarray, pred: np.ndarray):

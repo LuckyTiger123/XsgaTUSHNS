@@ -4,6 +4,7 @@ import sys
 import torch
 import argparse
 from tqdm import tqdm
+import numpy as np
 import pandas as pd
 import torch.nn.functional as F
 from sklearn.metrics import roc_auc_score
@@ -24,7 +25,7 @@ parser.add_argument('-hd', '--hidden_size', type=int, default=256)
 parser.add_argument('-r', '--rand_seed', type=int, default=0)
 args = parser.parse_args()
 
-cuda_device = 7
+cuda_device = 5
 epoch_number = 30
 heads = 4
 att_norm = True
@@ -33,10 +34,11 @@ hidden_size = 256
 change_to_directed = True
 layer_num = 3
 train_sampler = -1
-dropout = 0.5
+dropout = 0
 class_weight = 1
-learning_rate = 0.0005
-weight_decay = 1e-4
+learning_rate = 0.001
+weight_decay = 5e-4
+model_number = 3
 
 # device
 device = torch.device('cuda:{}'.format(cuda_device) if torch.cuda.is_available() else 'cpu')
@@ -114,10 +116,6 @@ class Net(torch.nn.Module):
             lin.reset_parameters()
 
 
-model = Net().to(device)
-optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-
-
 def train():
     # data.y is labels of shape (N, )
     model.train()
@@ -151,32 +149,38 @@ def valid():
         preds.append(F.softmax(out, dim=1)[:, 1].cpu())
 
     y, pred = torch.cat(ys, dim=0).numpy(), torch.cat(preds, dim=0).numpy()
-    return roc_auc_score(y, pred)
+    return roc_auc_score(y, pred), pred, y
 
 
 train_loader = NeighborLoader(data, num_neighbors=[train_sampler] * layer_num, input_nodes=data.train_mask,
                               batch_size=1024, shuffle=True, num_workers=12)
-valid_loader = NeighborLoader(data, num_neighbors=[train_sampler] * layer_num, input_nodes=data.valid_mask,
-                              batch_size=4096, shuffle=False, num_workers=12)
+valid_loader = NeighborLoader(data, num_neighbors=[-1] * layer_num, input_nodes=data.valid_mask, batch_size=4096,
+                              shuffle=False, num_workers=12)
+test_loader = NeighborLoader(data, num_neighbors=[-1] * layer_num, input_nodes=data.test_mask, batch_size=4096,
+                             shuffle=False, num_workers=12)
 
-# train_loader = NeighborSampler(data.adj_t, node_idx=train_idx, sizes=[10, 5], batch_size=1024, shuffle=True,
-#                                num_workers=12)
-# layer_loader = NeighborSampler(data.adj_t, node_idx=None, sizes=[-1], batch_size=4096, shuffle=False,
-#                                num_workers=12)
+model_result = []
 
-best_valid_auc = 0
-for epoch in range(epoch_number):
+for m_num in range(model_number):
+    key_type = m_num % 3
+    model = Net().to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    best_valid_auc = 0
+    best_pred = None
+    y = None
+    for epoch in range(epoch_number):
+        print('-----------------------------------------------------')
+        print('For the {} epoch:'.format(epoch))
+        train_loss = train()
+        print('The train loss is {}.'.format(train_loss))
+        c_valid_auc, pred, y = valid()
+        print('The valid auc is {}.'.format(c_valid_auc))
+
+        if c_valid_auc > best_valid_auc:
+            best_valid_auc = c_valid_auc
+            best_pred = pred
+        print('-----------------------------------------------------')
+
     print('-----------------------------------------------------')
-    print('For the {} epoch:'.format(epoch))
-    train_loss = train()
-    print('The train loss is {}.'.format(train_loss))
-    c_valid_auc = valid()
-    print('The valid auc is {}.'.format(c_valid_auc))
-
-    if c_valid_auc > best_valid_auc:
-        best_valid_auc = c_valid_auc
+    print('The best valid auc is {}.'.format(best_valid_auc))
     print('-----------------------------------------------------')
-
-print('-----------------------------------------------------')
-print('The best valid auc is {}.'.format(best_valid_auc))
-print('-----------------------------------------------------')

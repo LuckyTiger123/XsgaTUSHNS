@@ -51,8 +51,8 @@ data = dataset[0]
 #
 # print(x_binned.shape)
 
-print((data.y[data.valid_mask] == 0).sum())
-print((data.y[data.valid_mask] == 1).sum())
-
-print((data.y[data.train_mask] == 0).sum())
-print((data.y[data.train_mask] == 1).sum())
+demo = np.load('/home/luckytiger/2022_finvcup_baseline/submit/submit_demo.npy')
+submit = np.load('/home/luckytiger/2022_finvcup_baseline/submit/model_submit_1.npy')
+print(demo.shape)
+print(submit)
+# print(data.test_mask.size())
