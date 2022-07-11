@@ -5,13 +5,14 @@ import torch
 import argparse
 from tqdm import tqdm
 import pandas as pd
+import numpy as np
 import torch.nn.functional as F
 from sklearn.metrics import roc_auc_score
 from torch_geometric.loader import NeighborLoader
 
 sys.path.append(os.path.join(os.path.dirname("__file__"), '..'))
 from our_model.modified_xygraph import XYGraphP1
-from our_model.load_data import fold_timestamp, to_undirected, degree_frequency
+from our_model.load_data import fold_timestamp, to_undirected, degree_frequency, cal_current_state
 from our_model.faeture_propagation import feature_propagation
 from our_model.modified_GAT import modified_GAT
 
@@ -24,7 +25,7 @@ parser.add_argument('-hd', '--hidden_size', type=int, default=256)
 parser.add_argument('-r', '--rand_seed', type=int, default=0)
 args = parser.parse_args()
 
-cuda_device = 7
+cuda_device = 6
 epoch_number = 30
 heads = 4
 att_norm = True
@@ -35,7 +36,7 @@ layer_num = 3
 train_sampler = -1
 dropout = 0
 class_weight = 1
-learning_rate = 0.005
+learning_rate = 0.001
 weight_decay = 5e-4
 
 # device
@@ -151,7 +152,9 @@ def valid():
         preds.append(F.softmax(out, dim=1)[:, 1].cpu())
 
     y, pred = torch.cat(ys, dim=0).numpy(), torch.cat(preds, dim=0).numpy()
-    return roc_auc_score(y, pred)
+    cal_current_state(y, pred)
+
+    return roc_auc_score(y, pred), y, pred
 
 
 train_loader = NeighborLoader(data, num_neighbors=[train_sampler] * layer_num, input_nodes=data.train_mask,
@@ -165,18 +168,24 @@ valid_loader = NeighborLoader(data, num_neighbors=[train_sampler] * layer_num, i
 #                                num_workers=12)
 
 best_valid_auc = 0
+label = None
+pred = None
 for epoch in range(epoch_number):
     print('-----------------------------------------------------')
     print('For the {} epoch:'.format(epoch))
     train_loss = train()
     print('The train loss is {}.'.format(train_loss))
-    c_valid_auc = valid()
+    c_valid_auc, valid_label, valid_pred = valid()
     print('The valid auc is {}.'.format(c_valid_auc))
 
     if c_valid_auc > best_valid_auc:
         best_valid_auc = c_valid_auc
+        label = valid_label
+        pred = valid_pred
     print('-----------------------------------------------------')
 
 print('-----------------------------------------------------')
 print('The best valid auc is {}.'.format(best_valid_auc))
+np.save('/home/luckytiger/xinye_data_1/y.npy', label)
+np.save('/home/luckytiger/xinye_data_1/pred.npy', pred)
 print('-----------------------------------------------------')

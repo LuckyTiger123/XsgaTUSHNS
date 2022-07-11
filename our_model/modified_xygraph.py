@@ -22,18 +22,28 @@ def read_xygraphp1(folder):
     edge_type = torch.tensor(items[0]['edge_type'], dtype=torch.float)
 
     # add feature flag
+    print('Add feature flag...')
     x = ld.add_feature_flag(x)
 
+    # bin the raw feature
+    # print('Add binned feature...')
+    # x_bin = torch.tensor(ld.binned_feature(items[0]['x']), dtype=torch.float)
+    # x = torch.cat((x, x_bin), dim=1)
+
     # add user_id
+    print('Add user id...')
     x = ld.add_id_feature(x)
 
     # add degree feature
+    print('Add degree feature...')
     x = ld.add_degree_feature(x, edge_index)
 
     # add label feature
+    print('Add label feature...')
     x = ld.add_label_feature(x, y)
 
     # add dynamic degree feature
+    print('Add dynamic degree...')
     x = ld.add_dynamic_degree(x)
 
     # edge timestamp

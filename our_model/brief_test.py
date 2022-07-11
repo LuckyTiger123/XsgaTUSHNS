@@ -40,6 +40,19 @@ from our_model.load_data import fold_timestamp, degree_frequency
 dataset = XYGraphP1(root='/home/luckytiger/xinye_data_1', name='xydata')
 data = dataset[0]
 
-x_back_label = data.x[:, 41:]
+# x_raw_feature = dataset['x']
+#
+# binned_method = 'kmeans'
+#
+# from sklearn.preprocessing import KBinsDiscretizer
+#
+# est = KBinsDiscretizer(n_bins=10, encode='onehot-dense', strategy=binned_method)
+# x_binned = est.fit_transform(x_raw_feature)
+#
+# print(x_binned.shape)
 
-x = degree_frequency(x_back_label)
+print((data.y[data.valid_mask] == 0).sum())
+print((data.y[data.valid_mask] == 1).sum())
+
+print((data.y[data.train_mask] == 0).sum())
+print((data.y[data.train_mask] == 1).sum())

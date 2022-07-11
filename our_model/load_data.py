@@ -4,6 +4,7 @@ import math
 import torch
 import numpy as np
 import torch_geometric.transforms as T
+from sklearn.preprocessing import KBinsDiscretizer
 import torch.nn.functional as F
 from torch import Tensor
 import torch_geometric.utils as utils
@@ -95,3 +96,26 @@ def degree_frequency(x: Tensor):
 
 def to_undirected(edge_index: Tensor, edge_attr: Tensor):
     return utils.to_undirected(edge_index, edge_attr=edge_attr)
+
+
+def binned_feature(x: np.ndarray, bin_num: int = 10, binned_method: str = 'kmeans'):
+    est = KBinsDiscretizer(n_bins=bin_num, encode='onehot-dense', strategy=binned_method)
+    x_binned = est.fit_transform(x)
+    return x_binned
+
+
+def sharpen_value(x: Tensor, left_th: float = 0, right_th: float = 0, left_m: float = 0, right_a: float = 0):
+    return
+
+
+def cal_current_state(y: np.ndarray, pred: np.ndarray):
+    l0_index = (y == 0)
+    l1_index = (y == 1)
+    print('For label 0, the max value is {}, the min value is {}, the mean value is {}'.format(np.max(pred[l0_index]),
+                                                                                               np.min(pred[l0_index]),
+                                                                                               np.mean(pred[l0_index])))
+    print('For label 1, the max value is {}, the min value is {}, the mean value is {}'.format(np.max(pred[l1_index]),
+                                                                                               np.min(pred[l1_index]),
+                                                                                               np.mean(pred[l1_index])))
+
+    return
