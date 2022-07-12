@@ -24,6 +24,9 @@ parser.add_argument('-hd', '--hidden_size', type=int, default=256)
 parser.add_argument('-r', '--rand_seed', type=int, default=0)
 args = parser.parse_args()
 
+n2v_path_list = []
+
+
 n2v_path = '../node2vec/random_walk_feature_20_10_50_0.pt'
 cuda_device = 7
 epoch_number = 30
@@ -32,7 +35,7 @@ att_norm = True
 key_type = 0
 hidden_size = 256
 change_to_directed = True
-layer_num = 2
+layer_num = 3
 train_sampler = -1
 dropout = 0.3
 class_weight = 1

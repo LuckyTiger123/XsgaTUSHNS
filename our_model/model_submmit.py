@@ -49,7 +49,7 @@ data = dataset[0]
 x = data.x[:, :37]
 x_back_label = data.x[:, 39:41]
 x = torch.cat((x, x_back_label), dim=1)
-x_dtf = fold_timestamp(data.x[:, 41:], fold_num=40)
+x_dtf = fold_timestamp(data.x[:, 41:], fold_num=30)
 x_tg = degree_frequency(data.x[:, 41:])
 
 x = torch.cat((x, x_dtf, x_tg), dim=1)

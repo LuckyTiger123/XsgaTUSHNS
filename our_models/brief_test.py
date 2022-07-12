@@ -6,9 +6,9 @@ import torch_geometric.transforms as T
 import torch.nn.functional as F
 import torch_geometric.utils as utils
 
-sys.path.append(os.path.join(os.path.dirname("__file__"), '..'))
-from our_model.modified_xygraph import XYGraphP1
-from our_model.load_data import fold_timestamp, degree_frequency
+
+from our_models.modified_xygraph_yh import XYGraphP1
+from our_models.load_data import fold_timestamp
 
 # cuda_device = 7
 # device = torch.device('cuda:{}'.format(cuda_device) if torch.cuda.is_available() else 'cpu')
@@ -37,22 +37,7 @@ from our_model.load_data import fold_timestamp, degree_frequency
 # edge_feature = torch.cat((edge_type.unsqueeze(1), edge_timestamp.unsqueeze(1)), dim=-1)
 # print(edge_feature.size())
 
-dataset = XYGraphP1(root='/home/luckytiger/xinye_data_1', name='xydata')
+dataset = XYGraphP1(root='/data/shangyihao/ppd', name='xydata')
 data = dataset[0]
 
-# x_raw_feature = dataset['x']
-#
-# binned_method = 'kmeans'
-#
-# from sklearn.preprocessing import KBinsDiscretizer
-#
-# est = KBinsDiscretizer(n_bins=10, encode='onehot-dense', strategy=binned_method)
-# x_binned = est.fit_transform(x_raw_feature)
-#
-# print(x_binned.shape)
-
-demo = np.load('/home/luckytiger/2022_finvcup_baseline/submit/submit_demo.npy')
-submit = np.load('/home/luckytiger/2022_finvcup_baseline/submit/model_submit_4.npy')
-print(demo.shape)
-print(submit.shape)
-# print(data.test_mask.size())
+print((data.x == -1).sum())

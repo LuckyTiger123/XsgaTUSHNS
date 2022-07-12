@@ -4,40 +4,48 @@ import sys
 import torch
 import argparse
 from tqdm import tqdm
+import numpy as np
 import pandas as pd
 import torch.nn.functional as F
 from sklearn.metrics import roc_auc_score
 from torch_geometric.loader import NeighborLoader
 
 sys.path.append(os.path.join(os.path.dirname("__file__"), '..'))
-from our_model.modified_xygraph import XYGraphP1
-from our_model.load_data import fold_timestamp, to_undirected, degree_frequency
-from our_model.faeture_propagation import feature_propagation
-from our_model.modified_GAT import modified_GAT
+from our_models.modified_xygraph import XYGraphP1
+from our_models.load_data import fold_timestamp, to_undirected, degree_frequency
+from our_models.faeture_propagation import feature_propagation
+from our_models.modified_GAT_yh import modified_GAT, TimeEncoder
 
 parser = argparse.ArgumentParser()
-parser.add_argument('-c', '--cuda', type=int, default=0)
-parser.add_argument('-t', '--train_round', type=int, default=3)
-parser.add_argument('-f', '--file_id', type=int, default=0)
+parser.add_argument('-c', '--cuda', type=int, default=7)
+# parser.add_argument('-t', '--train_round', type=int, default=3)
+# parser.add_argument('-f', '--file_id', type=int, default=0)
 parser.add_argument('-e', '--epoch', type=int, default=30)
+parser.add_argument('-mn', '--model_num', type=int, default=5)
 parser.add_argument('-hd', '--hidden_size', type=int, default=256)
+parser.add_argument('-lr', '--learning_rate', type=float, default=0.001)
+parser.add_argument('-wd', '--weight_decay', type=float, default=5e-4)
+parser.add_argument('-d', '--dropout', type=float, default=0)
+# parser.add_argument('-kt', '--key_type', type=int, default=0)
 parser.add_argument('-r', '--rand_seed', type=int, default=0)
 args = parser.parse_args()
 
-n2v_path = '../node2vec/random_walk_feature_20_10_50_0.pt'
-cuda_device = 7
-epoch_number = 30
+hidden_size = args.hidden_size
+cuda_device = args.cuda
+epoch_number = args.epoch
+dropout = args.dropout
+model_number = args.model_num
+learning_rate = args.learning_rate
+weight_decay = args.weight_decay
+# key_type = args.key_type
+key_type_list = [0, 1, 2]
+
 heads = 4
 att_norm = True
-key_type = 0
-hidden_size = 256
 change_to_directed = True
-layer_num = 2
+layer_num = 3
 train_sampler = -1
-dropout = 0.3
 class_weight = 1
-learning_rate = 0.001
-weight_decay = 5e-4
 
 # device
 device = torch.device('cuda:{}'.format(cuda_device) if torch.cuda.is_available() else 'cpu')
@@ -53,9 +61,6 @@ torch.backends.cudnn.deterministic = True
 dataset = XYGraphP1(root='/home/luckytiger/xinye_data_1', name='xydata')
 data = dataset[0]
 
-# laod node2vec feature
-x_node2vec = torch.load(n2v_path).detach()
-
 # deal with the node feature
 x = data.x[:, :37]
 x_back_label = data.x[:, 39:41]
@@ -63,8 +68,15 @@ x = torch.cat((x, x_back_label), dim=1)
 x_dtf = fold_timestamp(data.x[:, 41:], fold_num=30)
 x_tg = degree_frequency(data.x[:, 41:])
 
-x = torch.cat((x, x_dtf, x_tg, x_node2vec), dim=1)
+x = torch.cat((x, x_dtf, x_tg), dim=1)
 # x = torch.cat((x, x_dtf), dim=1)
+
+# add edge_feature
+edge_feat = torch.load(os.path.join('../data', 'edge_feat_all.pt'))[:, 1:]
+edge_time = torch.load(os.path.join('../data', 'node_edge_time_cut.pt')).unsqueeze(1)
+edge_all = torch.cat((edge_time, edge_feat), dim=1)
+data.edge_attr = edge_all
+
 data.x = x
 if change_to_directed:
     edge_index, edge_attr = to_undirected(data.edge_index, data.edge_attr)
@@ -118,10 +130,6 @@ class Net(torch.nn.Module):
             lin.reset_parameters()
 
 
-model = Net().to(device)
-optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-
-
 def train():
     # data.y is labels of shape (N, )
     model.train()
@@ -160,29 +168,29 @@ def valid():
 
 train_loader = NeighborLoader(data, num_neighbors=[train_sampler] * layer_num, input_nodes=data.train_mask,
                               batch_size=1024, shuffle=True, num_workers=12)
-valid_loader = NeighborLoader(data, num_neighbors=[train_sampler] * layer_num, input_nodes=data.valid_mask,
-                              batch_size=4096, shuffle=False, num_workers=12)
+valid_loader = NeighborLoader(data, num_neighbors=[-1] * layer_num, input_nodes=data.valid_mask, batch_size=4096,
+                              shuffle=False, num_workers=12)
+test_loader = NeighborLoader(data, num_neighbors=[-1] * layer_num, input_nodes=data.test_mask, batch_size=4096,
+                             shuffle=False, num_workers=12)
 
-# train_loader = NeighborSampler(data.adj_t, node_idx=train_idx, sizes=[10, 5], batch_size=1024, shuffle=True,
-#                                num_workers=12)
-# layer_loader = NeighborSampler(data.adj_t, node_idx=None, sizes=[-1], batch_size=4096, shuffle=False,
-#                                num_workers=12)
+for m_num in range(model_number):
+    for key_type in key_type_list:
+        model = Net().to(device)
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+        best_valid_auc = 0
+        for epoch in range(epoch_number):
+            print('-----------------------------------------------------')
+            print('For the {} model, {} epoch:'.format(m_num, epoch))
+            train_loss = train()
+            print('The train loss is {}.'.format(train_loss))
+            c_valid_auc = valid()
+            print('The valid auc is {}.'.format(c_valid_auc))
 
-best_valid_auc = 0
-for epoch in range(epoch_number):
-    print('-----------------------------------------------------')
-    print('For the {} epoch:'.format(epoch))
-    train_loss = train()
-    print('The train loss is {}.'.format(train_loss))
-    c_valid_auc = valid()
-    print('The valid auc is {}.'.format(c_valid_auc))
+            if c_valid_auc > best_valid_auc:
+                best_valid_auc = c_valid_auc
+                torch.save(model, '../trained_model/{}_{}_{}_{}.pth'.format(learning_rate, dropout, key_type, m_num))
+            print('-----------------------------------------------------')
 
-    if c_valid_auc > best_valid_auc:
-        best_valid_auc = c_valid_auc
-    print('-----------------------------------------------------')
-
-print('-----------------------------------------------------')
-print('For the layer number {}, learning rate {}, weight decay {}, dropout {}.'.format(layer_num, learning_rate,
-                                                                                       weight_decay, dropout))
-print('The best valid auc is {}.'.format(best_valid_auc))
-print('-----------------------------------------------------')
+        print('-----------------------------------------------------')
+        print('The best valid auc is {}.'.format(best_valid_auc))
+        print('-----------------------------------------------------')

@@ -1,0 +1,204 @@
+import os
+import sys
+import torch
+import numpy as np
+from tqdm import tqdm
+import torch.nn.functional as F
+from sklearn.metrics import roc_auc_score
+from torch_geometric.loader import NeighborLoader
+from torch_geometric.nn import JumpingKnowledge as jk
+
+
+from our_models.modified_xygraph_yh import XYGraphP1
+from our_models.load_data import fold_timestamp, to_undirected
+from our_models.faeture_propagation import feature_propagation
+from our_models.modified_GAT_yh import modified_GAT
+
+
+cuda_device = 6
+epoch_number = 30
+heads = 4
+att_norm = True
+key_type = 0
+hidden_size = 256
+
+# device
+device = torch.device('cuda:{}'.format(cuda_device) if torch.cuda.is_available() else 'cpu')
+
+# random seed
+random_seed = 0
+torch.manual_seed(random_seed)
+torch.cuda.manual_seed(random_seed)
+torch.backends.cudnn.benchmark = False
+torch.backends.cudnn.deterministic = True
+
+# load data
+dataset = XYGraphP1(root='/data/shangyihao/ppd', name='xydata')
+data = dataset[0]
+
+# deal with the node feature
+x = data.x[:, :37]
+x_dtf = fold_timestamp(data.x[:, 41:], fold_num=30)
+x = torch.cat((x, x_dtf), dim=1)
+data.x = x
+
+# edge_index, edge_attr = to_undirected(data.edge_index, data.edge_attr)
+edge_classes = torch.from_numpy(np.load(os.path.join('/data/shangyihao/ppd', 'edge_classes_directed.npy'))).long()
+edge_index, edge_attr = data.edge_index, data.edge_attr
+data.edge_index = edge_index
+data.edge_attr = edge_classes
+
+
+class Net(torch.nn.Module):
+    def __init__(self):
+        super(Net, self).__init__()
+
+        self.convs1 = torch.nn.ModuleList([
+            modified_GAT(data.x.size(1), hidden_size, heads=heads, att_norm=att_norm, key_type=key_type)
+            for _ in range(4)
+        ])
+        # self.convs2 = torch.nn.ModuleList([
+        #     modified_GAT(hidden_size * heads, hidden_size, heads=heads, att_norm=att_norm, key_type=key_type)
+        #     for _ in range(4)
+        # ])
+        self.convs3 = torch.nn.ModuleList([
+            modified_GAT(hidden_size * heads, 2, heads=1, att_norm=att_norm, key_type=key_type)
+            for _ in range(4)
+        ])
+        self.lin1 = torch.nn.Linear(data.x.size(1), hidden_size * heads)
+        # self.lin2 = torch.nn.Linear(hidden_size * heads, hidden_size * heads)
+        self.lin3 = torch.nn.Linear(hidden_size * heads, 2)
+
+        self.bn1 = torch.nn.BatchNorm1d(data.x.size(1))
+        # self.bn2 = torch.nn.BatchNorm1d(hidden_size * heads)
+        self.bn3 = torch.nn.BatchNorm1d(hidden_size * heads)
+
+        self.fuse_weight = torch.nn.Parameter(torch.FloatTensor(2, 5), requires_grad=True)
+        self.fuse_weight.data.fill_(float(1 / 5))
+
+        self.reset_parameters()
+
+    def forward(self, x, edge_index, edge_attr):
+
+        # weight = self.fuse_weight
+        # fuse_weight = F.softmax(weight, dim=-1)
+
+        x = self.bn1(x)
+        x0 = self.fuse_weight[0][0] * self.lin1(x)
+        for i in range(4):
+            idx = edge_attr == i
+            sub_edge = edge_index[:, idx]
+            x0 += self.fuse_weight[0][i+1] * self.convs1[i](x, sub_edge)
+        x = F.relu(x0)
+
+        # x = self.bn2(x)
+        # xs = []
+        # xs.append(self.lin2(x))
+        # # x0 = self.lin2(x)
+        # for i in range(3):
+        #     idx = edge_attr == i
+        #     sub_edge = edge_index[:, idx]
+        #     xs.append(self.convs2[i](x, sub_edge))
+        #     # x0 += self.convs2[i](x, sub_edge)
+        # # x0 = torch.stack(xs, dim=-1).max(dim=-1)[0]
+        # x0 = torch.cat(xs, dim=-1)
+        # x = F.relu(self.lin22(x0))
+
+        x = self.bn3(x)
+        x0 = self.fuse_weight[1][0] * self.lin3(x)
+        for i in range(4):
+            idx = edge_attr == i
+            sub_edge = edge_index[:, idx]
+            x0 += self.fuse_weight[1][i+1] * self.convs3[i](x, sub_edge)
+        # x0 = torch.stack(xs, dim=-1).max(dim=-1)[0]
+        # x0 = torch.cat(xs, dim=-1)
+        x = F.relu(x0)
+
+        # x = self.bn1(x)
+        # x = F.relu(self.lin1(x) + self.con1(x, edge_index))
+        # # x = self.bn2(x)
+        # # x = F.relu(self.lin2(x) + self.con2(x, edge_index))
+        # x = self.bn3(x)
+        # x = F.relu(self.lin3(x) + self.con3(x, edge_index))
+        return x
+
+    def reset_parameters(self):
+        self.lin3.reset_parameters()
+        # self.lin2.reset_parameters()
+        self.lin1.reset_parameters()
+        for con in self.convs1:
+            con.reset_parameters()
+        # for con in self.convs2:
+        #     con.reset_parameters()
+        for con in self.convs3:
+            con.reset_parameters()
+
+
+model = Net().to(device)
+optimizer = torch.optim.Adam(model.parameters(), lr=5e-4, weight_decay=5e-4)
+
+
+def train():
+    # data.y is labels of shape (N, )
+    model.train()
+
+    total_examples = total_loss = 0
+    for batch in tqdm(train_loader):
+        optimizer.zero_grad()
+        batch = batch.to(device)
+        batch_size = batch.batch_size
+        out = model(batch.x, batch.edge_index, batch.edge_attr)
+        loss = F.cross_entropy(out[:batch_size], batch.y[:batch_size])
+        loss.backward()
+        optimizer.step()
+
+        total_examples += batch_size
+        total_loss += float(loss) * batch_size
+
+    return total_loss / total_examples
+
+
+@torch.no_grad()
+def valid():
+    # data.y is labels of shape (N, )
+    model.eval()
+    ys, preds = [], []
+    for batch in tqdm(valid_loader):
+        batch_size = batch.batch_size
+        ys.append(batch.y[:batch_size])
+        out = model(batch.x.to(device), batch.edge_index.to(device), batch.edge_attr.to(device))[:batch_size]
+        preds.append(F.softmax(out, dim=1)[:, 1].cpu())
+
+    y, pred = torch.cat(ys, dim=0).numpy(), torch.cat(preds, dim=0).numpy()
+
+    return roc_auc_score(y, pred)
+
+
+train_loader = NeighborLoader(data, num_neighbors=[-1]*2, input_nodes=data.train_mask, batch_size=1024, shuffle=True,
+                              num_workers=4)
+valid_loader = NeighborLoader(data, num_neighbors=[-1]*2, input_nodes=data.valid_mask, batch_size=4096, shuffle=False,
+                              num_workers=4)
+
+# train_loader = NeighborSampler(data.adj_t, node_idx=train_idx, sizes=[10, 5], batch_size=1024, shuffle=True,
+#                                num_workers=12)
+# layer_loader = NeighborSampler(data.adj_t, node_idx=None, sizes=[-1], batch_size=4096, shuffle=False,
+#                                num_workers=12)
+
+best_valid_auc = 0
+for epoch in range(epoch_number):
+    print('-----------------------------------------------------')
+    print('For the {} epoch:'.format(epoch))
+    train_loss = train()
+    print('The train loss is {}.'.format(train_loss))
+    c_valid_auc = valid()
+    print('The valid auc is {}.'.format(c_valid_auc))
+    print('Fusion weight is {}'.format(model.fuse_weight.data))
+
+    if c_valid_auc > best_valid_auc:
+        best_valid_auc = c_valid_auc
+    print('-----------------------------------------------------')
+
+print('-----------------------------------------------------')
+print('The best valid auc is {}.'.format(best_valid_auc))
+print('Fusion weight is {}'.format(model.fuse_weight.data))
+print('-----------------------------------------------------')

@@ -13,21 +13,26 @@ from our_model.faeture_propagation import feature_propagation
 
 change_to_directed = True
 num_round = 300
+n2v_path = '../node2vec/random_walk_feature_100_0.pt'
 
 # load data
 dataset = XYGraphP1(root='/home/luckytiger/xinye_data_1', name='xydata')
 print('Dataset load successfully...')
 data = dataset[0]
 
+# laod node2vec feature
+x_node2vec = torch.load(n2v_path).detach()
+
 # deal with the node feature
-x = data.x[:, :200]
-x_back_label = data.x[:, 202:204]
+x = data.x[:, :37]
+x_back_label = data.x[:, 39:41]
 x = torch.cat((x, x_back_label), dim=1)
-x_dtf = fold_timestamp(data.x[:, 204:], fold_num=30)
-x_tg = degree_frequency(data.x[:, 204:])
-x = torch.cat((x, x_dtf, x_tg), dim=1)
+x_dtf = fold_timestamp(data.x[:, 41:], fold_num=30)
+x_tg = degree_frequency(data.x[:, 41:])
+x = torch.cat((x, x_dtf, x_tg, x_node2vec), dim=1)
 # x = torch.cat((x, x_dtf), dim=1)
 data.x = x
+
 if change_to_directed:
     edge_index, edge_attr = to_undirected(data.edge_index, data.edge_attr)
 else:

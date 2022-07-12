@@ -17,28 +17,35 @@ from our_model.faeture_propagation import feature_propagation
 from our_model.modified_GAT import modified_GAT
 
 parser = argparse.ArgumentParser()
-parser.add_argument('-c', '--cuda', type=int, default=0)
-parser.add_argument('-t', '--train_round', type=int, default=3)
-parser.add_argument('-f', '--file_id', type=int, default=0)
+parser.add_argument('-c', '--cuda', type=int, default=7)
+# parser.add_argument('-t', '--train_round', type=int, default=3)
+# parser.add_argument('-f', '--file_id', type=int, default=0)
 parser.add_argument('-e', '--epoch', type=int, default=30)
+parser.add_argument('-mn', '--model_num', type=int, default=5)
 parser.add_argument('-hd', '--hidden_size', type=int, default=256)
+parser.add_argument('-lr', '--learning_rate', type=float, default=0.001)
+parser.add_argument('-wd', '--weight_decay', type=float, default=5e-4)
+parser.add_argument('-d', '--dropout', type=float, default=0)
+# parser.add_argument('-kt', '--key_type', type=int, default=0)
 parser.add_argument('-r', '--rand_seed', type=int, default=0)
 args = parser.parse_args()
 
-cuda_device = 5
-epoch_number = 30
+hidden_size = args.hidden_size
+cuda_device = args.cuda
+epoch_number = args.epoch
+dropout = args.dropout
+model_number = args.model_num
+learning_rate = args.learning_rate
+weight_decay = args.weight_decay
+# key_type = args.key_type
+key_type_list = [0, 1, 2]
+
 heads = 4
 att_norm = True
-key_type = 0
-hidden_size = 256
 change_to_directed = True
 layer_num = 3
 train_sampler = -1
-dropout = 0
 class_weight = 1
-learning_rate = 0.001
-weight_decay = 5e-4
-model_number = 3
 
 # device
 device = torch.device('cuda:{}'.format(cuda_device) if torch.cuda.is_available() else 'cpu')
@@ -149,7 +156,7 @@ def valid():
         preds.append(F.softmax(out, dim=1)[:, 1].cpu())
 
     y, pred = torch.cat(ys, dim=0).numpy(), torch.cat(preds, dim=0).numpy()
-    return roc_auc_score(y, pred), pred, y
+    return roc_auc_score(y, pred)
 
 
 train_loader = NeighborLoader(data, num_neighbors=[train_sampler] * layer_num, input_nodes=data.train_mask,
@@ -159,28 +166,24 @@ valid_loader = NeighborLoader(data, num_neighbors=[-1] * layer_num, input_nodes=
 test_loader = NeighborLoader(data, num_neighbors=[-1] * layer_num, input_nodes=data.test_mask, batch_size=4096,
                              shuffle=False, num_workers=12)
 
-model_result = []
-
 for m_num in range(model_number):
-    key_type = m_num % 3
-    model = Net().to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-    best_valid_auc = 0
-    best_pred = None
-    y = None
-    for epoch in range(epoch_number):
-        print('-----------------------------------------------------')
-        print('For the {} epoch:'.format(epoch))
-        train_loss = train()
-        print('The train loss is {}.'.format(train_loss))
-        c_valid_auc, pred, y = valid()
-        print('The valid auc is {}.'.format(c_valid_auc))
+    for key_type in key_type_list:
+        model = Net().to(device)
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+        best_valid_auc = 0
+        for epoch in range(epoch_number):
+            print('-----------------------------------------------------')
+            print('For the {} model, {} epoch:'.format(m_num, epoch))
+            train_loss = train()
+            print('The train loss is {}.'.format(train_loss))
+            c_valid_auc = valid()
+            print('The valid auc is {}.'.format(c_valid_auc))
 
-        if c_valid_auc > best_valid_auc:
-            best_valid_auc = c_valid_auc
-            best_pred = pred
-        print('-----------------------------------------------------')
+            if c_valid_auc > best_valid_auc:
+                best_valid_auc = c_valid_auc
+                torch.save(model, '../trained_model/{}_{}_{}_{}.pth'.format(learning_rate, dropout, key_type, m_num))
+            print('-----------------------------------------------------')
 
-    print('-----------------------------------------------------')
-    print('The best valid auc is {}.'.format(best_valid_auc))
-    print('-----------------------------------------------------')
+        print('-----------------------------------------------------')
+        print('The best valid auc is {}.'.format(best_valid_auc))
+        print('-----------------------------------------------------')
