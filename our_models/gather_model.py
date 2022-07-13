@@ -11,10 +11,28 @@ from sklearn.metrics import roc_auc_score
 from torch_geometric.loader import NeighborLoader
 
 sys.path.append(os.path.join(os.path.dirname("__file__"), '..'))
-from our_model.modified_xygraph import XYGraphP1
-from our_model.load_data import fold_timestamp, to_undirected, degree_frequency
-from our_model.faeture_propagation import feature_propagation
-from our_model.modified_GAT import modified_GAT
+from our_models.modified_xygraph import XYGraphP1
+from our_models.load_data import fold_timestamp, to_undirected, degree_frequency
+from our_models.faeture_propagation import feature_propagation
+from our_models.modified_GAT_yh import modified_GAT, TimeEncoder
+
+model_path_list = [
+    # 'time_edge_0.0005_0.5_0_0.pth',
+    # # 'time_edge_0.0005_0.5_0_1.pth',
+    # 'time_edge_0.0005_0.5_0_2.pth',
+    # 'time_edge_0.0005_0.5_0_3.pth',
+    # 'time_edge_0.0005_0.5_0_4.pth',
+    'time_edge_0.0005_0.5_1_0.pth',
+    'time_edge_0.0005_0.5_1_1.pth',
+    'time_edge_0.0005_0.5_1_2.pth',
+    'time_edge_0.0005_0.5_1_3.pth',
+    'time_edge_0.0005_0.5_1_4.pth',
+    # 'time_edge_0.0005_0.5_2_0.pth',
+    # 'time_edge_0.0005_0.5_2_1.pth',
+    # 'time_edge_0.0005_0.5_2_2.pth',
+    # 'time_edge_0.0005_0.5_2_3.pth',
+    # 'time_edge_0.0005_0.5_2_4.pth',
+]
 
 cuda_device = 7
 epoch_number = 30
@@ -29,40 +47,7 @@ dropout = 0.5
 class_weight = 1
 learning_rate = 0.0005
 weight_decay = 1e-4
-file_id = 7
-
-model_path_list = [
-    # '0.0005_0.5_0_0.pth',
-    '0.0005_0.5_0_1.pth',
-    # '0.0005_0.5_0_2.pth',
-    '0.0005_0.5_0_3.pth',
-    '0.0005_0.5_0_4.pth',
-    # '0.0005_0.5_1_0.pth',
-    # '0.0005_0.5_1_1.pth',
-    '0.0005_0.5_1_2.pth',
-    # '0.0005_0.5_1_3.pth',
-    # '0.0005_0.5_1_4.pth',
-    '0.0005_0.5_2_0.pth',
-    '0.0005_0.5_2_1.pth',
-    '0.0005_0.5_2_2.pth',
-    # '0.0005_0.5_2_3.pth',
-    # '0.0005_0.5_2_4.pth',
-    # '0.001_0_0_0.pth',
-    '0.001_0_0_1.pth',
-    # '0.001_0_0_2.pth',
-    '0.001_0_0_3.pth',
-    '0.001_0_0_4.pth',
-    '0.001_0_1_0.pth',
-    # '0.001_0_1_1.pth',
-    # '0.001_0_1_2.pth',
-    # '0.001_0_1_3.pth',
-    # '0.001_0_1_4.pth',
-    # '0.001_0_2_0.pth',
-    '0.001_0_2_1.pth',
-    '0.001_0_2_2.pth',
-    # '0.001_0_2_3.pth',
-    # '0.001_0_2_4.pth',
-]
+file_id = 0
 
 # device
 device = torch.device('cuda:{}'.format(cuda_device) if torch.cuda.is_available() else 'cpu')
@@ -87,6 +72,13 @@ x_tg = degree_frequency(data.x[:, 41:])
 
 x = torch.cat((x, x_dtf, x_tg), dim=1)
 # x = torch.cat((x, x_dtf), dim=1)
+
+# add edge_feature
+edge_feat = torch.load(os.path.join('../data', 'edge_feat_all.pt'))[:, 1:]
+edge_time = torch.load(os.path.join('../data', 'node_edge_time_cut.pt')).unsqueeze(1)
+edge_all = torch.cat((edge_time, edge_feat), dim=1)
+data.edge_attr = edge_all
+
 data.x = x
 if change_to_directed:
     edge_index, edge_attr = to_undirected(data.edge_index, data.edge_attr)
@@ -104,35 +96,48 @@ class Net(torch.nn.Module):
         self.convs = torch.nn.ModuleList()
         self.skips = torch.nn.ModuleList()
         self.bns = torch.nn.ModuleList()
+        self.edge_mlp = torch.nn.Linear(data.edge_attr.size(1) + hidden_size - 1, hidden_size)
+        self.temporal_encoder = TimeEncoder(hidden_size)
+
+        # if use_time:
+        #     input_dim = data.x.size(1) - 1
+        # else:
+        #     input_dim = data.x.size(1)
 
         self.convs.append(
-            modified_GAT(data.x.size(1), hidden_size, heads=heads, att_norm=att_norm, key_type=key_type,
-                         dropout=dropout))
+            modified_GAT(data.x.size(1), hidden_size, heads=heads, att_norm=att_norm, key_type=key_type
+                         , edge_dim=hidden_size, dropout=dropout))
         self.skips.append(torch.nn.Linear(data.x.size(1), hidden_size * heads))
         self.bns.append(torch.nn.BatchNorm1d(data.x.size(1)))
 
         for i in range(layer_num - 2):
             self.convs.append(
-                modified_GAT(hidden_size * heads, hidden_size, heads=heads, att_norm=att_norm, key_type=key_type,
-                             dropout=dropout))
+                modified_GAT(hidden_size * heads, hidden_size, heads=heads, att_norm=att_norm, key_type=key_type
+                             , edge_dim=hidden_size, dropout=dropout))
             self.skips.append(torch.nn.Linear(hidden_size * heads, hidden_size * heads))
             self.bns.append(torch.nn.BatchNorm1d(hidden_size * heads))
 
         self.convs.append(
-            modified_GAT(hidden_size * heads, 2, heads=1, att_norm=att_norm, key_type=key_type, dropout=dropout))
+            modified_GAT(hidden_size * heads, 2, heads=1, att_norm=att_norm, key_type=key_type
+                         , edge_dim=hidden_size, dropout=dropout))
         self.skips.append(torch.nn.Linear(hidden_size * heads, 2))
         self.bns.append(torch.nn.BatchNorm1d(hidden_size * heads))
 
         self.reset_parameters()
 
-    def forward(self, x, edge_index):
+    def forward(self, x, edge_index, edge_attr):
+        t = edge_attr[:, 0]
+        edge_feat = edge_attr[:, 1:]
+        t_emb = self.temporal_encoder(t)
+        edge_msg = self.edge_mlp(torch.cat((edge_feat, t_emb), dim=1))
         for i in range(self.layer_num):
             x = self.bns[i](x)
-            x = F.relu(self.skips[i](x) + self.convs[i](x, edge_index))
+            x = F.relu(self.skips[i](x) + self.convs[i](x, edge_index, edge_msg))
 
         return x
 
     def reset_parameters(self):
+        self.edge_mlp.reset_parameters()
         for conv in self.convs:
             conv.reset_parameters()
 
@@ -156,7 +161,13 @@ def valid():
     for batch in tqdm(valid_loader):
         batch_size = batch.batch_size
         ys.append(batch.y[:batch_size])
-        out = model(batch.x.to(device), batch.edge_index.to(device))[:batch_size]
+        out = model(batch.x.to(device), batch.edge_index.to(device),
+                    batch.edge_attr.to(device))[:batch_size]
+        # batch_x = batch.x.to(device)
+        # batch_t = batch_x[:, -1]
+        # batch_x = batch_x[:, :-1]
+        # batch_edge_index = batch.edge_index.to(device)
+        # out = model(batch_x, batch_edge_index, batch_t)[:batch_size]
         preds.append(F.softmax(out, dim=1)[:, 1].cpu())
 
     y, pred = torch.cat(ys, dim=0).numpy(), torch.cat(preds, dim=0).numpy()
@@ -170,7 +181,13 @@ def test():
     preds = []
     for batch in tqdm(test_loader):
         batch_size = batch.batch_size
-        out = model(batch.x.to(device), batch.edge_index.to(device))[:batch_size]
+        out = model(batch.x.to(device), batch.edge_index.to(device),
+                    batch.edge_attr.to(device))[:batch_size]
+        # batch_x = batch.x.to(device)
+        # batch_t = batch_x[:, -1]
+        # batch_x = batch_x[:, :-1]
+        # batch_edge_index = batch.edge_index.to(device)
+        # out = model(batch_x, batch_edge_index, batch_t)[:batch_size]
         preds.append(F.softmax(out, dim=1).cpu())
 
     pred = torch.cat(preds, dim=0).numpy()
@@ -195,6 +212,6 @@ valid_result_mean = np.mean(valid_result_agg, axis=0)
 test_result_agg = np.array(test_pred_list)
 test_result_mean = np.mean(test_result_agg, axis=0)
 
-# np.save('../submit/model_submit_{}.npy'.format(file_id), test_result_mean)
+# np.save('../submit/model_submit_edge_time_{}.npy'.format(file_id), test_result_mean)
 
 print('The auc score for the aggregation model is {}.'.format(roc_auc_score(y, valid_result_mean)))

@@ -20,12 +20,12 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-c', '--cuda', type=int, default=7)
 # parser.add_argument('-t', '--train_round', type=int, default=3)
 # parser.add_argument('-f', '--file_id', type=int, default=0)
-parser.add_argument('-e', '--epoch', type=int, default=30)
+parser.add_argument('-e', '--epoch', type=int, default=40)
 parser.add_argument('-mn', '--model_num', type=int, default=5)
 parser.add_argument('-hd', '--hidden_size', type=int, default=256)
-parser.add_argument('-lr', '--learning_rate', type=float, default=0.001)
-parser.add_argument('-wd', '--weight_decay', type=float, default=5e-4)
-parser.add_argument('-d', '--dropout', type=float, default=0)
+parser.add_argument('-lr', '--learning_rate', type=float, default=0.0005)
+parser.add_argument('-wd', '--weight_decay', type=float, default=1e-4)
+parser.add_argument('-d', '--dropout', type=float, default=0.5)
 # parser.add_argument('-kt', '--key_type', type=int, default=0)
 parser.add_argument('-r', '--rand_seed', type=int, default=0)
 args = parser.parse_args()
@@ -94,35 +94,48 @@ class Net(torch.nn.Module):
         self.convs = torch.nn.ModuleList()
         self.skips = torch.nn.ModuleList()
         self.bns = torch.nn.ModuleList()
+        self.edge_mlp = torch.nn.Linear(data.edge_attr.size(1) + hidden_size - 1, hidden_size)
+        self.temporal_encoder = TimeEncoder(hidden_size)
+
+        # if use_time:
+        #     input_dim = data.x.size(1) - 1
+        # else:
+        #     input_dim = data.x.size(1)
 
         self.convs.append(
-            modified_GAT(data.x.size(1), hidden_size, heads=heads, att_norm=att_norm, key_type=key_type,
-                         dropout=dropout))
+            modified_GAT(data.x.size(1), hidden_size, heads=heads, att_norm=att_norm, key_type=key_type
+                         , edge_dim=hidden_size, dropout=dropout))
         self.skips.append(torch.nn.Linear(data.x.size(1), hidden_size * heads))
         self.bns.append(torch.nn.BatchNorm1d(data.x.size(1)))
 
         for i in range(layer_num - 2):
             self.convs.append(
-                modified_GAT(hidden_size * heads, hidden_size, heads=heads, att_norm=att_norm, key_type=key_type,
-                             dropout=dropout))
+                modified_GAT(hidden_size * heads, hidden_size, heads=heads, att_norm=att_norm, key_type=key_type
+                             , edge_dim=hidden_size, dropout=dropout))
             self.skips.append(torch.nn.Linear(hidden_size * heads, hidden_size * heads))
             self.bns.append(torch.nn.BatchNorm1d(hidden_size * heads))
 
         self.convs.append(
-            modified_GAT(hidden_size * heads, 2, heads=1, att_norm=att_norm, key_type=key_type, dropout=dropout))
+            modified_GAT(hidden_size * heads, 2, heads=1, att_norm=att_norm, key_type=key_type
+                         , edge_dim=hidden_size, dropout=dropout))
         self.skips.append(torch.nn.Linear(hidden_size * heads, 2))
         self.bns.append(torch.nn.BatchNorm1d(hidden_size * heads))
 
         self.reset_parameters()
 
-    def forward(self, x, edge_index):
+    def forward(self, x, edge_index, edge_attr):
+        t = edge_attr[:, 0]
+        edge_feat = edge_attr[:, 1:]
+        t_emb = self.temporal_encoder(t)
+        edge_msg = self.edge_mlp(torch.cat((edge_feat, t_emb), dim=1))
         for i in range(self.layer_num):
             x = self.bns[i](x)
-            x = F.relu(self.skips[i](x) + self.convs[i](x, edge_index))
+            x = F.relu(self.skips[i](x) + self.convs[i](x, edge_index, edge_msg))
 
         return x
 
     def reset_parameters(self):
+        self.edge_mlp.reset_parameters()
         for conv in self.convs:
             conv.reset_parameters()
 
@@ -139,7 +152,11 @@ def train():
         optimizer.zero_grad()
         batch = batch.to(device)
         batch_size = batch.batch_size
-        out = model(batch.x, batch.edge_index)
+        out = model(batch.x, batch.edge_index, batch.edge_attr)
+        # batch_t = batch.x[:, -1]
+        # batch_x = batch.x[:, :-1]
+        # out = model(batch_x, batch.edge_index, batch_t)
+        # loss = func_loss(out[:batch_size], batch.y[:batch_size])
         loss = F.cross_entropy(out[:batch_size], batch.y[:batch_size],
                                weight=torch.Tensor([1, class_weight]).to(device))
         loss.backward()
@@ -159,7 +176,13 @@ def valid():
     for batch in tqdm(valid_loader):
         batch_size = batch.batch_size
         ys.append(batch.y[:batch_size])
-        out = model(batch.x.to(device), batch.edge_index.to(device))[:batch_size]
+        out = model(batch.x.to(device), batch.edge_index.to(device),
+                    batch.edge_attr.to(device))[:batch_size]
+        # batch_x = batch.x.to(device)
+        # batch_t = batch_x[:, -1]
+        # batch_x = batch_x[:, :-1]
+        # batch_edge_index = batch.edge_index.to(device)
+        # out = model(batch_x, batch_edge_index, batch_t)[:batch_size]
         preds.append(F.softmax(out, dim=1)[:, 1].cpu())
 
     y, pred = torch.cat(ys, dim=0).numpy(), torch.cat(preds, dim=0).numpy()
@@ -188,7 +211,8 @@ for m_num in range(model_number):
 
             if c_valid_auc > best_valid_auc:
                 best_valid_auc = c_valid_auc
-                torch.save(model, '../trained_model/{}_{}_{}_{}.pth'.format(learning_rate, dropout, key_type, m_num))
+                torch.save(model,
+                           '../trained_model/time_edge_{}_{}_{}_{}.pth'.format(learning_rate, dropout, key_type, m_num))
             print('-----------------------------------------------------')
 
         print('-----------------------------------------------------')
