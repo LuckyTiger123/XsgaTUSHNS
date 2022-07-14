@@ -52,7 +52,15 @@ data = dataset[0]
 # print(x_binned.shape)
 
 demo = np.load('/home/luckytiger/2022_finvcup_baseline/submit/submit_demo.npy')
-submit = np.load('/home/luckytiger/2022_finvcup_baseline/submit/model_submit_4.npy')
+submit = np.load('/home/luckytiger/2022_finvcup_baseline/submit/ensemble_final.npy')
 print(demo.shape)
 print(submit.shape)
+
+# submit = submit.reshape(-1, 1)
+#
+# label_0 = 1 - submit
+# submit = np.hstack((label_0, submit))
+
+# np.save('../submit/xgboost_8.npy', submit)
+
 # print(data.test_mask.size())

@@ -11,12 +11,15 @@ class feature_propagation(MessagePassing):
         self.k = k
         self.eps = eps
 
-    def forward(self, x: Tensor, f_mask: Tensor, edge_index: Tensor, edge_attr: OptTensor = None):
+    def forward(self, x: Tensor, edge_index: Tensor, k: int, f_mask: Tensor = None, edge_attr: OptTensor = None):
+
         # remove self loop
         edge_index, edge_attr = remove_self_loops(edge_index, edge_attr)
 
-        for i in range(self.k):
+        for i in range(k):
             out = self.propagate(edge_index, x=x)
-            x = (self.eps * x + out * f_mask) / (1 + self.eps)
-
+            if f_mask is None:
+                x = (self.eps * x + out) / (1 + self.eps)
+            else:
+                x = (self.eps * x + out * f_mask) / (1 + self.eps)
         return x

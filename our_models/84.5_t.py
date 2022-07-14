@@ -14,6 +14,7 @@ from our_models.load_data import fold_timestamp, to_undirected, degree_frequency
 from our_models.faeture_propagation import feature_propagation
 from our_models.modified_GAT_yh import modified_GAT, TimeEncoder
 from our_models.focalloss import FocalLoss
+from our_models.extra import label_feature
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-c', '--cuda', type=int, default=0)
@@ -24,8 +25,8 @@ parser.add_argument('-hd', '--hidden_size', type=int, default=256)
 parser.add_argument('-r', '--rand_seed', type=int, default=0)
 args = parser.parse_args()
 
-cuda_device = 7
-epoch_number = 40
+cuda_device = 5
+epoch_number = 30
 heads = 4
 att_norm = True
 key_type = 0
@@ -33,8 +34,7 @@ hidden_size = 256
 change_to_directed = True
 layer_num = 3
 train_sampler = -1
-# dropout = 0.5
-dropout = 0.5
+dropout = 0
 class_weight = 1
 learning_rate = 0.0005
 # learning_rate = 1e-3
@@ -63,33 +63,15 @@ x_dtf = fold_timestamp(data.x[:, 41:], fold_num=30)
 x_tg = degree_frequency(data.x[:, 41:])
 
 x = torch.cat((x, x_dtf, x_tg), dim=1)
-# x = torch.cat((x, x_dtf), dim=1)
-# data.x = x
-# if change_to_directed:
-#     edge_index, edge_attr = to_undirected(data.edge_index, data.edge_attr)
-# else:
-#     edge_index, edge_attr = data.edge_index, data.edge_attr
-# data.edge_index = edge_index
-# data.edge_attr = edge_attr
-
-# add node_timestamps
-# use_time = False
-# flag = 'max'
-# if flag == 'mean':
-#     x_time = torch.load(os.path.join('/data/shangyihao/ppd', 'node_time_cut_mean.pt'))
-# else:
-#     x_time = torch.load(os.path.join('/data/shangyihao/ppd', 'node_time_cut_max.pt'))
-#
-# x = torch.cat((x, x_time.unsqueeze(1)), dim=1)
-
 
 # add edge_feature
 edge_feat = torch.load(os.path.join('../data', 'edge_feat_all.pt'))[:, 1:]
 edge_time = torch.load(os.path.join('../data', 'node_edge_time_cut.pt')).unsqueeze(1)
 edge_all = torch.cat((edge_time, edge_feat), dim=1)
 data.edge_attr = edge_all
-
 data.x = x
+label_feature = label_feature(data)
+
 if change_to_directed:
     edge_index, edge_attr = to_undirected(data.edge_index, data.edge_attr)
 else:
@@ -109,36 +91,36 @@ class Net(torch.nn.Module):
         self.edge_mlp = torch.nn.Linear(data.edge_attr.size(1) + hidden_size - 1, hidden_size)
         self.temporal_encoder = TimeEncoder(hidden_size)
 
-        # if use_time:
-        #     input_dim = data.x.size(1) - 1
-        # else:
-        #     input_dim = data.x.size(1)
-
         self.convs.append(
-            modified_GAT(data.x.size(1), hidden_size, heads=heads, att_norm=att_norm, key_type=key_type
-                         , edge_dim=hidden_size
-                         , dropout=dropout))
-        self.skips.append(torch.nn.Linear(data.x.size(1), hidden_size * heads))
-        self.bns.append(torch.nn.BatchNorm1d(data.x.size(1)))
+            modified_GAT(data.x.size(1) - 16, hidden_size, heads=heads, att_norm=att_norm, key_type=key_type,
+                         kq_dim=hidden_size, edge_dim=hidden_size, dropout=dropout))
+        self.skips.append(torch.nn.Linear(data.x.size(1) - 16, hidden_size * heads))
+        self.bns.append(torch.nn.BatchNorm1d(data.x.size(1) - 16))
 
         for i in range(layer_num - 2):
             self.convs.append(
-                modified_GAT(hidden_size * heads, hidden_size, heads=heads, att_norm=att_norm, key_type=key_type
-                             , edge_dim=hidden_size
-                             , dropout=dropout))
+                modified_GAT(hidden_size * heads, hidden_size, heads=heads, att_norm=att_norm, key_type=key_type,
+                             kq_dim=hidden_size, edge_dim=hidden_size, dropout=dropout))
             self.skips.append(torch.nn.Linear(hidden_size * heads, hidden_size * heads))
             self.bns.append(torch.nn.BatchNorm1d(hidden_size * heads))
 
         self.convs.append(
-            modified_GAT(hidden_size * heads, 2, heads=1, att_norm=att_norm, key_type=key_type
-                         , edge_dim=hidden_size
-                         , dropout=dropout))
-        self.skips.append(torch.nn.Linear(hidden_size * heads, 2))
+            modified_GAT(hidden_size * heads, hidden_size, heads=1, att_norm=att_norm, key_type=key_type,
+                         kq_dim=hidden_size, edge_dim=hidden_size, dropout=dropout))
+        self.skips.append(torch.nn.Linear(hidden_size * heads, hidden_size))
         self.bns.append(torch.nn.BatchNorm1d(hidden_size * heads))
+
+        self.output = torch.nn.ModuleList()
+        self.output.append(torch.nn.Linear(16, hidden_size))
+        self.output.append(torch.nn.Linear(hidden_size, hidden_size))
+
+        self.lin_transfer = torch.nn.Linear(hidden_size * 2, 2)
 
         self.reset_parameters()
 
     def forward(self, x, edge_index, edge_attr):
+        x_label = x[:, -16:]
+        x = x[:, :-16]
         t = edge_attr[:, 0]
         edge_feat = edge_attr[:, 1:]
         t_emb = self.temporal_encoder(t)
@@ -147,7 +129,16 @@ class Net(torch.nn.Module):
             x = self.bns[i](x)
             x = F.relu(self.skips[i](x) + self.convs[i](x, edge_index, edge_msg))
 
-        return x
+        x_label = self.output[0](x_label)
+        x_label = F.relu(x_label)
+        x_label = self.output[1](x_label)
+        x_label = F.relu(x_label)
+
+        x = torch.cat((x, x_label), dim=1)
+
+        out = self.lin_transfer(x)
+
+        return out
 
     def reset_parameters(self):
         self.edge_mlp.reset_parameters()
@@ -156,6 +147,9 @@ class Net(torch.nn.Module):
 
         for lin in self.skips:
             lin.reset_parameters()
+
+        for out_lin in self.output:
+            out_lin.reset_parameters()
 
 
 model = Net().to(device)

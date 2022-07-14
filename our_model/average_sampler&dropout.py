@@ -85,19 +85,20 @@ class Net(torch.nn.Module):
 
         self.convs.append(
             modified_GAT(data.x.size(1), hidden_size, heads=heads, att_norm=att_norm, key_type=key_type,
-                         dropout=dropout))
+                         kq_dim=hidden_size, dropout=dropout))
         self.skips.append(torch.nn.Linear(data.x.size(1), hidden_size * heads))
         self.bns.append(torch.nn.BatchNorm1d(data.x.size(1)))
 
         for i in range(layer_num - 2):
             self.convs.append(
                 modified_GAT(hidden_size * heads, hidden_size, heads=heads, att_norm=att_norm, key_type=key_type,
-                             dropout=dropout))
+                             kq_dim=hidden_size, dropout=dropout))
             self.skips.append(torch.nn.Linear(hidden_size * heads, hidden_size * heads))
             self.bns.append(torch.nn.BatchNorm1d(hidden_size * heads))
 
         self.convs.append(
-            modified_GAT(hidden_size * heads, 2, heads=1, att_norm=att_norm, key_type=key_type, dropout=dropout))
+            modified_GAT(hidden_size * heads, 2, heads=1, att_norm=att_norm, key_type=key_type, kq_dim=hidden_size,
+                         dropout=dropout))
         self.skips.append(torch.nn.Linear(hidden_size * heads, 2))
         self.bns.append(torch.nn.BatchNorm1d(hidden_size * heads))
 

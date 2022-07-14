@@ -192,9 +192,11 @@ print('----------------------------------------------')
 valid_result_agg = np.array(valid_pred_list)
 valid_result_mean = np.mean(valid_result_agg, axis=0)
 
+np.save('../submit/series1_valid_{}.npy'.format(file_id), valid_result_agg)
+
 test_result_agg = np.array(test_pred_list)
 test_result_mean = np.mean(test_result_agg, axis=0)
 
-# np.save('../submit/model_submit_{}.npy'.format(file_id), test_result_mean)
+np.save('../submit/series1_test_{}.npy'.format(file_id), test_result_agg)
 
 print('The auc score for the aggregation model is {}.'.format(roc_auc_score(y, valid_result_mean)))

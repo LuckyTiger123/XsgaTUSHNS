@@ -11,27 +11,27 @@ from sklearn.metrics import roc_auc_score
 from torch_geometric.loader import NeighborLoader
 
 sys.path.append(os.path.join(os.path.dirname("__file__"), '..'))
-from our_models.modified_xygraph import XYGraphP1
+from our_model.modified_xygraph import XYGraphP1
 from our_models.load_data import fold_timestamp, to_undirected, degree_frequency
 from our_models.faeture_propagation import feature_propagation
 from our_models.modified_GAT_yh import modified_GAT, TimeEncoder
 
 model_path_list = [
-    # 'time_edge_0.0005_0.5_0_0.pth',
-    # # 'time_edge_0.0005_0.5_0_1.pth',
-    # 'time_edge_0.0005_0.5_0_2.pth',
-    # 'time_edge_0.0005_0.5_0_3.pth',
-    # 'time_edge_0.0005_0.5_0_4.pth',
+    'time_edge_0.0005_0.5_0_0.pth',
+    'time_edge_0.0005_0.5_0_1.pth',
+    'time_edge_0.0005_0.5_0_2.pth',
+    'time_edge_0.0005_0.5_0_3.pth',
+    'time_edge_0.0005_0.5_0_4.pth',
     'time_edge_0.0005_0.5_1_0.pth',
     'time_edge_0.0005_0.5_1_1.pth',
     'time_edge_0.0005_0.5_1_2.pth',
     'time_edge_0.0005_0.5_1_3.pth',
     'time_edge_0.0005_0.5_1_4.pth',
-    # 'time_edge_0.0005_0.5_2_0.pth',
-    # 'time_edge_0.0005_0.5_2_1.pth',
-    # 'time_edge_0.0005_0.5_2_2.pth',
-    # 'time_edge_0.0005_0.5_2_3.pth',
-    # 'time_edge_0.0005_0.5_2_4.pth',
+    'time_edge_0.0005_0.5_2_0.pth',
+    'time_edge_0.0005_0.5_2_1.pth',
+    'time_edge_0.0005_0.5_2_2.pth',
+    'time_edge_0.0005_0.5_2_3.pth',
+    'time_edge_0.0005_0.5_2_4.pth',
 ]
 
 cuda_device = 7
@@ -207,11 +207,26 @@ for model_path in model_path_list:
 
 print('----------------------------------------------')
 valid_result_agg = np.array(valid_pred_list)
+np.save('../submit/series2_valid_{}.npy'.format(file_id), valid_result_agg)
 valid_result_mean = np.mean(valid_result_agg, axis=0)
 
+print('The auc score for the aggregation model is {}.'.format(roc_auc_score(y, valid_result_mean)))
+
 test_result_agg = np.array(test_pred_list)
+np.save('../submit/series2_test_{}.npy'.format(file_id), test_result_agg)
 test_result_mean = np.mean(test_result_agg, axis=0)
 
-# np.save('../submit/model_submit_edge_time_{}.npy'.format(file_id), test_result_mean)
+series1_valid = np.load('/home/luckytiger/2022_finvcup_baseline/submit/series1_valid_7.npy')
+series1_test = np.load('/home/luckytiger/2022_finvcup_baseline/submit/series1_test_7.npy')
 
-print('The auc score for the aggregation model is {}.'.format(roc_auc_score(y, valid_result_mean)))
+valid_result_agg_2 = np.vstack((valid_result_agg, series1_valid))
+valid_result_mean_2 = np.mean(valid_result_agg_2, axis=0)
+
+print('The auc score for the total aggregation model is {}.'.format(roc_auc_score(y, valid_result_mean_2)))
+
+test_result_agg_2 = np.vstack((test_result_agg, series1_test))
+test_result_mean_2 = np.mean(test_result_agg_2, axis=0)
+
+np.save('../submit/total_test_{}.npy'.format(file_id), test_result_mean_2)
+
+# valid_mean = np.mean(np.array([valid_result_mean, series1_valid]), axis=0)
