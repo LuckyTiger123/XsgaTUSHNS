@@ -2,3 +2,4 @@ result/
 trained_model/
 node2vec/
 other/
+conv_fe/xydata
